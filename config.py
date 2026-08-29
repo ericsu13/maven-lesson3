@@ -30,6 +30,17 @@ SF_DOMAIN = os.getenv("sf_domain") or "login"
 # The standard AccountPlan object requires API v62.0+; use a recent version.
 SF_API_VERSION = os.getenv("sf_api_version") or "64.0"
 
+# --- Agent 5 MCP transport ---
+# "stdio" (default): the client spawns mcp_server.py per call over stdin/stdout.
+# "http": the client connects to a long-running server you start by hand, so
+#   you can watch requests hit that one process (better for demos/debugging).
+MCP_TRANSPORT = (os.getenv("mcp_transport") or "stdio").lower()
+MCP_HTTP_HOST = os.getenv("mcp_http_host") or "127.0.0.1"
+# Not 8000 — that's the FastAPI backend. Use a distinct port for the MCP server.
+MCP_HTTP_PORT = int(os.getenv("mcp_http_port") or "8765")
+MCP_HTTP_PATH = os.getenv("mcp_http_path") or "/mcp"
+MCP_HTTP_URL = f"http://{MCP_HTTP_HOST}:{MCP_HTTP_PORT}{MCP_HTTP_PATH}"
+
 # --- Model ---
 MODEL = "gpt-5.5"
 

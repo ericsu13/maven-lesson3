@@ -1,9 +1,14 @@
 """MCP client wrapper for the Salesforce Account Plan server.
 
-The backend calls submit_via_mcp(); it launches mcp_server.py over stdio,
-invokes the `create_account_plan` tool, and returns its {status, message,
-details} result. This keeps Agent 5 behind the MCP boundary instead of a
-direct in-process function call.
+The backend calls submit_via_mcp(); it reaches the create_account_plan tool
+over one of two transports (config.MCP_TRANSPORT):
+
+- "stdio" (default): spawn mcp_server.py per call over stdin/stdout.
+- "http": connect to a long-running server at config.MCP_HTTP_URL that you
+  started by hand, so every request hits that one process.
+
+Either way it returns the tool's {status, message, details} result, keeping
+Agent 5 behind the MCP boundary instead of a direct in-process call.
 """
 
 import json
@@ -13,15 +18,27 @@ import anyio
 from mcp import Client, StdioServerParameters
 
 from applog import logger
+from config import MCP_HTTP_URL, MCP_TRANSPORT
 
-# Launch the MCP server with this project's Python, from the project root
-# (inherited cwd) so it can load .env.demo and import the tools package.
-_SERVER = StdioServerParameters(command=sys.executable, args=["mcp_server.py"])
+# stdio: launch the MCP server with this project's Python, from the project
+# root (inherited cwd) so it can load .env.demo and import the tools package.
+_STDIO_SERVER = StdioServerParameters(command=sys.executable, args=["mcp_server.py"])
+
+
+def _connect_target():
+    """Return (client_arg, human_label) for the configured transport."""
+    if MCP_TRANSPORT == "http":
+        return MCP_HTTP_URL, f"HTTP server at {MCP_HTTP_URL}"
+    return _STDIO_SERVER, f"stdio subprocess '{_STDIO_SERVER.command} {' '.join(_STDIO_SERVER.args)}'"
 
 
 async def _acall(company: str, plan: dict) -> dict:
-    logger.info("[MCP CLIENT] Launching MCP server '%s %s' over stdio...", _SERVER.command, " ".join(_SERVER.args))
-    async with Client(_SERVER) as client:
+    target, label = _connect_target()
+    if MCP_TRANSPORT == "http":
+        logger.info("[MCP CLIENT] Connecting to %s...", label)
+    else:
+        logger.info("[MCP CLIENT] Launching %s...", label)
+    async with Client(target) as client:
         logger.info("[MCP CLIENT] Connected. Invoking MCP tool 'create_account_plan'.")
         logger.info(
             "[MCP CLIENT] Passing competitive analysis JSON for '%s' (%d fields).",
@@ -51,7 +68,11 @@ async def _acall(company: str, plan: dict) -> dict:
 
 def submit_via_mcp(company: str, plan: dict) -> dict:
     """Blocking wrapper (the pipeline is synchronous): run the async MCP call."""
-    logger.info("[MCP CLIENT] submit_via_mcp: routing '%s' account plan through MCP.", company)
+    logger.info(
+        "[MCP CLIENT] submit_via_mcp: routing '%s' account plan through MCP (%s transport).",
+        company,
+        MCP_TRANSPORT,
+    )
     try:
         return anyio.run(_acall, company, plan)
     except Exception as exc:

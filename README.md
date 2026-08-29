@@ -70,9 +70,24 @@ Agent 5 also sets, on the `AccountPlan` record:
 
 ### Why MCP for Agent 5
 
-The Salesforce write is exposed as an MCP tool (`create_account_plan`) served by [mcp_server.py](mcp_server.py). The backend never calls Salesforce directly; it calls the MCP client wrapper ([tools/salesforce_client.py](tools/salesforce_client.py)), which launches the server over stdio, invokes the tool, and returns `{status, message, details}`. This keeps the CRM write behind a clean, standard, swappable interface.
+The Salesforce write is exposed as an MCP tool (`create_account_plan`) served by [mcp_server.py](mcp_server.py). The backend never calls Salesforce directly; it calls the MCP client wrapper ([tools/salesforce_client.py](tools/salesforce_client.py)), which invokes the tool and returns `{status, message, details}`. This keeps the CRM write behind a clean, standard, swappable interface.
 
-> **You do NOT start the MCP server yourself.** It uses **stdio transport**, so the client spawns a fresh `python mcp_server.py` subprocess on each submit and the process exits when the call completes. There is no long-running daemon or port to manage. To debug the server in isolation, you can run it directly: `.venv/bin/python mcp_server.py`.
+**Transport modes** (set `mcp_transport` in `.env.demo`, or as an env var):
+
+| Mode | How it runs | Do you start the server? |
+|------|-------------|--------------------------|
+| `stdio` (default) | The client spawns a fresh `python mcp_server.py` subprocess per submit and it exits when the call completes. | **No.** No daemon or port to manage. A hand-started copy stays idle and is never used. |
+| `http` | You run `mcp_server.py` once as a long-running server on a port; the client connects to its URL. | **Yes.** Every submit hits that one process and logs to its window — best for demos/debugging. |
+
+To run the HTTP server (defaults to `http://127.0.0.1:8765/mcp`, override with `mcp_http_host` / `mcp_http_port` / `mcp_http_path`):
+
+```bash
+mcp_transport=http .venv/bin/python mcp_server.py   # leave running
+```
+
+Then run the app (or a submit) with the same `mcp_transport=http` so the client connects to it instead of spawning its own subprocess.
+
+> In **stdio** mode, running `mcp_server.py` by hand only helps you debug it in isolation (catch startup/import/credential errors) — the app never talks to that instance. If you want the process you started to be the one the app uses, use **http** mode.
 
 **Observability.** Both sides log the MCP round-trip so you can watch it execute. The client emits `[MCP CLIENT]` lines (launching the server, invoking the tool, passing the competitive-analysis JSON, parsing the result) and the server emits `[MCP SERVER]` lines (startup banner, the tool invocation, the 11 received fields, the hand-off to Agent 5, and the returned status). Because stdio owns stdout, the server routes its logs to **stderr** so they never corrupt the JSON-RPC channel. A typical submit looks like:
 
