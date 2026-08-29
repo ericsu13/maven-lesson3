@@ -41,6 +41,7 @@ class AnalyzeRequest(BaseModel):
 class SubmitRequest(BaseModel):
     company: str
     plan: dict
+    transport: str = "stdio"  # "stdio" | "http" — which MCP transport to use
 
 
 @app.post("/api/analyze")
@@ -60,7 +61,13 @@ def analyze(req: AnalyzeRequest):
 
 @app.post("/api/submit")
 def submit(req: SubmitRequest):
-    return pipeline.submit(req.company, req.plan)
+    return pipeline.submit(req.company, req.plan, transport=req.transport)
+
+
+@app.get("/api/mcp/health")
+def mcp_health(transport: str = "stdio"):
+    """Preflight for the UI's transport toggle: is the MCP server reachable?"""
+    return pipeline.mcp_health(transport)
 
 
 @app.get("/api/health")

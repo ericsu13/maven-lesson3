@@ -85,7 +85,7 @@ To run the HTTP server (defaults to `http://127.0.0.1:8765/mcp`, override with `
 mcp_transport=http .venv/bin/python mcp_server.py   # leave running
 ```
 
-Then run the app (or a submit) with the same `mcp_transport=http` so the client connects to it instead of spawning its own subprocess.
+The web UI also has a **stdio ⟷ http slider** (below the "use memory" checkbox) that sets the transport per submit — no env var needed. When you flip it to http, the UI runs a **preflight health check** against the server URL; if nothing is listening it disables Publish and shows how to start the server (`GET /api/mcp/health?transport=http` backs this). The `mcp_transport` env var still sets the default for CLI runs and for the server process itself.
 
 > In **stdio** mode, running `mcp_server.py` by hand only helps you debug it in isolation (catch startup/import/credential errors) — the app never talks to that instance. If you want the process you started to be the one the app uses, use **http** mode.
 

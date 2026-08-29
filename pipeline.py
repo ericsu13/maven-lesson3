@@ -24,7 +24,7 @@ from tools.memory import (
     write_competitive_news,
     write_internal_research,
 )
-from tools.salesforce_client import submit_via_mcp
+from tools.salesforce_client import check_mcp_health, submit_via_mcp
 from tools.web_search import (
     discover_competitors,
     research_company,
@@ -189,14 +189,20 @@ def analyze(company: str, use_memory: bool = True) -> dict:
     return result
 
 
-def submit(company: str, plan: dict) -> dict:
+def submit(company: str, plan: dict, transport: str = None) -> dict:
     """Run Agent 5 via MCP: write the (edited) plan to Salesforce.
 
     Delegates to the salesforce-account-plan MCP server rather than calling
-    the Salesforce tool in-process. Returns a {status, message, details} dict.
+    the Salesforce tool in-process. `transport` ("stdio"|"http") overrides the
+    configured default for this call. Returns a {status, message, details} dict.
     """
     company = (company or "").strip()
     if not company or not plan:
         return {"status": "FAIL", "message": "Missing company or account plan."}
 
-    return submit_via_mcp(company, plan)
+    return submit_via_mcp(company, plan, transport=transport)
+
+
+def mcp_health(transport: str = None) -> dict:
+    """Preflight check for the UI: is the MCP server reachable for `transport`?"""
+    return check_mcp_health(transport)

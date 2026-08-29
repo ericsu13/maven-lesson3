@@ -1,4 +1,4 @@
-import { useState, useRef, useLayoutEffect } from 'react'
+import { useState, useRef, useLayoutEffect, useEffect } from 'react'
 
 // Turn "strategic_priorities" -> "Strategic Priorities"
 const humanize = (key) =>
@@ -41,9 +41,27 @@ function Logo() {
   )
 }
 
+// Inline status line for the http transport preflight.
+function HttpStatus({ health }) {
+  if (health.state === 'idle') return null
+  if (health.state === 'checking') {
+    return (
+      <p className="transport-status checking">
+        <Spinner /> Checking for a running MCP server…
+      </p>
+    )
+  }
+  if (health.state === 'ok') {
+    return <p className="transport-status ok">✓ {health.detail}</p>
+  }
+  return <p className="transport-status down">⚠ {health.detail}</p>
+}
+
 export default function App() {
   const [company, setCompany] = useState('')
   const [useMemory, setUseMemory] = useState(true)
+  const [transport, setTransport] = useState('stdio') // 'stdio' | 'http'
+  const [httpHealth, setHttpHealth] = useState({ state: 'idle' }) // idle|checking|ok|down
   const [phase, setPhase] = useState('input') // input | analyzing | review | submitting | done
   const [steps, setSteps] = useState([])
   const [error, setError] = useState(null)
@@ -51,6 +69,30 @@ export default function App() {
   const [plan, setPlan] = useState(null) // { field: string[] }
   const [submitResult, setSubmitResult] = useState(null)
   const [showModal, setShowModal] = useState(false)
+
+  // Preflight the http transport: it only works if a standalone MCP server is
+  // already running. Re-check when the toggle flips or we reach the review step.
+  useEffect(() => {
+    if (transport !== 'http') {
+      setHttpHealth({ state: 'idle' })
+      return
+    }
+    let cancelled = false
+    setHttpHealth({ state: 'checking' })
+    fetch('/api/mcp/health?transport=http')
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled) setHttpHealth({ state: d.ok ? 'ok' : 'down', detail: d.detail })
+      })
+      .catch((err) => {
+        if (!cancelled) setHttpHealth({ state: 'down', detail: `Health check failed: ${err.message}` })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [transport, phase])
+
+  const httpBlocked = transport === 'http' && httpHealth.state !== 'ok'
 
   const analyze = async (e) => {
     e.preventDefault()
@@ -121,7 +163,7 @@ export default function App() {
       const res = await fetch('/api/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company: result.company, plan: cleaned }),
+        body: JSON.stringify({ company: result.company, plan: cleaned, transport }),
       })
       if (!res.ok) throw new Error(`Server error (${res.status})`)
       const data = await res.json()
@@ -191,6 +233,33 @@ export default function App() {
               run in-memory only.
             </span>
           </label>
+
+          <div className="transport">
+            <div className="transport-row">
+              <span className="transport-caption">
+                MCP transport for the Salesforce write (Agent 5)
+              </span>
+              <div className="switch-group">
+                <span className={transport === 'stdio' ? 'seg on' : 'seg'}>stdio</span>
+                <label className="switch" title="Toggle MCP transport">
+                  <input
+                    type="checkbox"
+                    checked={transport === 'http'}
+                    onChange={(e) => setTransport(e.target.checked ? 'http' : 'stdio')}
+                    disabled={phase === 'analyzing'}
+                  />
+                  <span className="slider" />
+                </label>
+                <span className={transport === 'http' ? 'seg on' : 'seg'}>http</span>
+              </div>
+            </div>
+            <p className="transport-hint">
+              {transport === 'stdio'
+                ? 'stdio — the app spawns the MCP server per submit (zero setup).'
+                : 'http — connects to a standalone MCP server you run yourself.'}
+            </p>
+            {transport === 'http' && <HttpStatus health={httpHealth} />}
+          </div>
         </form>
       )}
 
@@ -256,14 +325,26 @@ export default function App() {
           </div>
 
           {phase !== 'done' && (
-            <div className="actions">
-              <button className="secondary" onClick={reset} disabled={phase === 'submitting'}>
-                Start over
-              </button>
-              <button onClick={submit} disabled={phase === 'submitting'}>
-                {phase === 'submitting' ? 'Publishing…' : 'Publish to Salesforce'}
-              </button>
-            </div>
+            <>
+              {transport === 'http' && (
+                <div className="transport-review">
+                  <span className="transport-badge">via http MCP</span>
+                  <HttpStatus health={httpHealth} />
+                </div>
+              )}
+              <div className="actions">
+                <button className="secondary" onClick={reset} disabled={phase === 'submitting'}>
+                  Start over
+                </button>
+                <button
+                  onClick={submit}
+                  disabled={phase === 'submitting' || httpBlocked}
+                  title={httpBlocked ? 'Start the http MCP server first' : undefined}
+                >
+                  {phase === 'submitting' ? 'Publishing…' : 'Publish to Salesforce'}
+                </button>
+              </div>
+            </>
           )}
         </section>
       )}

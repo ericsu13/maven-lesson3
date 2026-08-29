@@ -25,16 +25,21 @@ from config import MCP_HTTP_URL, MCP_TRANSPORT
 _STDIO_SERVER = StdioServerParameters(command=sys.executable, args=["mcp_server.py"])
 
 
-def _connect_target():
-    """Return (client_arg, human_label) for the configured transport."""
-    if MCP_TRANSPORT == "http":
+def _resolve_transport(transport):
+    """Fall back to the configured default when no per-request override is given."""
+    return (transport or MCP_TRANSPORT or "stdio").lower()
+
+
+def _connect_target(transport):
+    """Return (client_arg, human_label) for the given transport."""
+    if transport == "http":
         return MCP_HTTP_URL, f"HTTP server at {MCP_HTTP_URL}"
     return _STDIO_SERVER, f"stdio subprocess '{_STDIO_SERVER.command} {' '.join(_STDIO_SERVER.args)}'"
 
 
-async def _acall(company: str, plan: dict) -> dict:
-    target, label = _connect_target()
-    if MCP_TRANSPORT == "http":
+async def _acall(company: str, plan: dict, transport: str) -> dict:
+    target, label = _connect_target(transport)
+    if transport == "http":
         logger.info("[MCP CLIENT] Connecting to %s...", label)
     else:
         logger.info("[MCP CLIENT] Launching %s...", label)
@@ -66,15 +71,57 @@ async def _acall(company: str, plan: dict) -> dict:
             }
 
 
-def submit_via_mcp(company: str, plan: dict) -> dict:
-    """Blocking wrapper (the pipeline is synchronous): run the async MCP call."""
+def submit_via_mcp(company: str, plan: dict, transport: str = None) -> dict:
+    """Blocking wrapper (the pipeline is synchronous): run the async MCP call.
+
+    `transport` overrides config.MCP_TRANSPORT for this call ("stdio"|"http").
+    """
+    transport = _resolve_transport(transport)
     logger.info(
         "[MCP CLIENT] submit_via_mcp: routing '%s' account plan through MCP (%s transport).",
         company,
-        MCP_TRANSPORT,
+        transport,
     )
     try:
-        return anyio.run(_acall, company, plan)
+        return anyio.run(_acall, company, plan, transport)
     except Exception as exc:
         logger.warning("[MCP CLIENT] call failed: %s", exc)
-        return {"status": "FAIL", "message": f"MCP invocation failed: {exc}", "details": {}}
+        hint = ""
+        if transport == "http":
+            hint = (
+                f" Is the HTTP MCP server running at {MCP_HTTP_URL}? "
+                "Start it with: mcp_transport=http .venv/bin/python mcp_server.py"
+            )
+        return {"status": "FAIL", "message": f"MCP invocation failed: {exc}.{hint}", "details": {}}
+
+
+async def _aping(transport: str) -> None:
+    """Open a client and list tools — proves the transport is actually reachable."""
+    target, _ = _connect_target(transport)
+    async with Client(target) as client:
+        await client.list_tools()
+
+
+def check_mcp_health(transport: str = None) -> dict:
+    """Preflight: is the MCP server reachable for the given transport?
+
+    stdio always self-launches, so it's reported healthy without spawning.
+    http is genuinely probed (connect + list_tools). Returns
+    {ok, transport, detail}.
+    """
+    transport = _resolve_transport(transport)
+    if transport != "http":
+        return {"ok": True, "transport": transport, "detail": "stdio launches on demand."}
+    try:
+        anyio.run(_aping, transport)
+        return {"ok": True, "transport": "http", "detail": f"Reachable at {MCP_HTTP_URL}."}
+    except Exception as exc:
+        logger.info("[MCP CLIENT] health check failed for http: %s", exc)
+        return {
+            "ok": False,
+            "transport": "http",
+            "detail": (
+                f"No MCP server reachable at {MCP_HTTP_URL}. Start it with: "
+                "mcp_transport=http .venv/bin/python mcp_server.py"
+            ),
+        }
