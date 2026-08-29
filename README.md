@@ -37,75 +37,8 @@ Agents 2 and 3 run in **parallel**. Between Agent 4 and Agent 5, a **human revie
 
 ## The approach — agent + memory architecture
 
-```
-                          Company name
-                               |
-                               v
-                    +---------------------+
-                    |  AGENT 1: DISCOVER  |   you.com + Comparably
-                    |  top ~3 competitors |   "<Company> vs <X>" pages
-                    +---------------------+
-                               |
-                 competitor names + company
-                               |
-             +-----------------+------------------+
-             |  run in parallel (ThreadPoolExecutor)
-             v                                    v
-   +--------------------+              +-----------------------+
-   | AGENT 2: RESEARCH  |  (xN)        |  AGENT 3: RESEARCH    |
-   |   each competitor  |              |   primary company     |
-   | news/product/share |              | news/earnings/posn.   |
-   +--------------------+              +-----------------------+
-             |                                    |
-    competitive_news[]                     internal_research
-             |                                    |
-             +------------------+-----------------+
-                                |
-                 (optional)     v
-              +--------------------------------+
-              |   mem0  (hosted memory store)  |   << toggle: "use memory"
-              |  each item stamped with run_ts |
-              +--------------------------------+
-                                |
-                 research text read back
-                 (mem0 read-back, else in-
-                  memory fallback)
-                                |
-                                v
-                    +-----------------------+
-                    |  AGENT 4: SYNTHESIZE  |   gpt-5.5, structured
-                    |   11-field account    |   output (Pydantic)
-                    |        plan           |
-                    +-----------------------+
-                                |
-                        account plan (JSON)
-                                |
-                                v
-                 +-------------------------------+
-                 |   HUMAN IN THE LOOP (web UI)  |
-                 |   review + edit the 11 fields |
-                 +-------------------------------+
-                                |
-                        edited plan (JSON)
-                                |
-                                v
-        - - - - - - - - - MCP boundary (stdio) - - - - - - - - - -
-        |                                                        |
-        |   pipeline.submit()                                    |
-        |        -> tools/salesforce_client.py  (MCP CLIENT)     |
-        |               spawns, per call:                        |
-        |        -> mcp_server.py                (MCP SERVER)     |
-        |               tool: create_account_plan                |
-        |        -> tools/salesforce.py          (Agent 5 core)  |
-        - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-                                |
-                                v
-                    +-----------------------+
-                    |      SALESFORCE       |
-                    |  Account (find/create)|
-                    |  + AccountPlan record |
-                    +-----------------------+
-```
+![Solution Architecture](Solution%20Architecture.png)
+
 
 ### The 11 account-plan fields
 
@@ -140,6 +73,18 @@ Agent 5 also sets, on the `AccountPlan` record:
 The Salesforce write is exposed as an MCP tool (`create_account_plan`) served by [mcp_server.py](mcp_server.py). The backend never calls Salesforce directly; it calls the MCP client wrapper ([tools/salesforce_client.py](tools/salesforce_client.py)), which launches the server over stdio, invokes the tool, and returns `{status, message, details}`. This keeps the CRM write behind a clean, standard, swappable interface.
 
 > **You do NOT start the MCP server yourself.** It uses **stdio transport**, so the client spawns a fresh `python mcp_server.py` subprocess on each submit and the process exits when the call completes. There is no long-running daemon or port to manage. To debug the server in isolation, you can run it directly: `.venv/bin/python mcp_server.py`.
+
+**Observability.** Both sides log the MCP round-trip so you can watch it execute. The client emits `[MCP CLIENT]` lines (launching the server, invoking the tool, passing the competitive-analysis JSON, parsing the result) and the server emits `[MCP SERVER]` lines (startup banner, the tool invocation, the 11 received fields, the hand-off to Agent 5, and the returned status). Because stdio owns stdout, the server routes its logs to **stderr** so they never corrupt the JSON-RPC channel. A typical submit looks like:
+
+```
+[MCP CLIENT] submit_via_mcp: routing 'Dell' account plan through MCP.
+[MCP CLIENT] Launching MCP server '.../python mcp_server.py' over stdio...
+[MCP SERVER] Tool 'create_account_plan' invoked.
+[MCP SERVER] Received competitive analysis JSON: 11 fields (strengths, weaknesses, ...).
+[MCP SERVER] Handing off to Agent 5 (Salesforce write)...
+[MCP SERVER] Agent 5 returned status=PASS: Created AccountPlan '...' on Account '...'.
+[MCP CLIENT] Parsed result: status=PASS.
+```
 
 ---
 

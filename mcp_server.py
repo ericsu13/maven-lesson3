@@ -37,9 +37,25 @@ mcp = MCPServer(
 )
 def create_account_plan(company: str, plan: dict) -> dict:
     """Agent 5 as an MCP tool. `plan` is the 11-field account-plan dict."""
+    logger.info("=" * 60)
+    logger.info("[MCP SERVER] Tool 'create_account_plan' invoked.")
+    logger.info("[MCP SERVER] Received company: '%s'", company)
+    logger.info(
+        "[MCP SERVER] Received competitive analysis JSON: %d fields (%s).",
+        len(plan or {}),
+        ", ".join((plan or {}).keys()) or "none",
+    )
+    logger.info("[MCP SERVER] Handing off to Agent 5 (Salesforce write)...")
+
     status, message, details = create_account_plan_record(company, plan)
+
+    logger.info("[MCP SERVER] Agent 5 returned status=%s: %s", status, message)
+    logger.info("[MCP SERVER] Returning result to MCP client.")
+    logger.info("=" * 60)
     return {"status": status, "message": message, "details": details}
 
 
 if __name__ == "__main__":
+    logger.info("[MCP SERVER] salesforce-account-plan server starting (stdio transport).")
+    logger.info("[MCP SERVER] Waiting for an MCP client to connect on stdin/stdout...")
     mcp.run(transport="stdio")

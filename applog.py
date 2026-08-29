@@ -13,6 +13,9 @@ logger = logging.getLogger("competitive_analysis")
 
 if not logger.handlers:
     logger.setLevel(logging.INFO)
+    # Don't bubble up to the root logger (the MCP server installs its own root
+    # handler, which would otherwise print every line a second time).
+    logger.propagate = False
     fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", "%H:%M:%S")
 
     file_handler = logging.FileHandler("logs/competitive_analysis.log")
