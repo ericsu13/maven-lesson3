@@ -1,0 +1,25 @@
+# Core orchestration
+langchain>=0.2
+langgraph>=0.2
+langchain-openai>=0.1
+langchain-community>=0.2
+
+# Vector store (used later for research memory)
+pinecone-client>=4.0
+
+# Long-term memory (competitive_news store)
+mem0ai>=0.1
+
+# Salesforce (Agent 5 writes the account plan to a demo org)
+simple-salesforce>=1.12
+
+# Web API (backend for the React frontend)
+fastapi>=0.110
+uvicorn[standard]>=0.29
+
+# MCP server/client for the Salesforce write (Agent 5)
+mcp>=2.0
+
+# Utilities
+python-dotenv>=1.0
+requests>=2.31
