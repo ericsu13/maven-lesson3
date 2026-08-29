@@ -230,6 +230,76 @@ Prompts for a company name, runs Agents 1–5 end to end, prints the account pla
 
 ---
 
+## Evaluation
+
+An evaluation harness ([eval/](eval/)) runs a fixed dataset of companies through the real pipeline and scores four things: **success** (did the flow behave correctly), **accuracy** (content correctness), **latency** (per-phase and total), and **output** (the plan or error each case produced). It writes a self-contained **visual dashboard** you can open in a browser.
+
+**Run it:**
+
+```bash
+.venv/bin/python eval/run_eval.py
+```
+
+Then open [eval/results/dashboard.html](eval/results/dashboard.html) (data is embedded, so it works over `file://` — no server needed). Raw results land in `eval/results/results.json`.
+
+**The dataset** ([eval/dataset.py](eval/dataset.py)) covers the meaningful axes:
+
+| Axis | Cases |
+|------|-------|
+| Company reality | **Real** (Salesforce, Schlumberger, Databricks) vs. **fictitious** (must fail gracefully at Agent 1, not hallucinate competitors) |
+| Salesforce presence | Accounts that already exist vs. ones the run creates |
+| Memory | `use_memory` on vs. off |
+| MCP transport | `stdio` vs. `http` (the harness boots the http server itself, then tears it down) |
+
+Each case declares the contract the harness asserts:
+
+- `plan` — analyze must return a plan with **all 11 fields** populated.
+- `discover_fail` — analyze must fail at the **discover** stage and must not produce a plan.
+
+**What it measures:**
+
+- **success** — plan produced / graceful failure / Salesforce write passed, as expected.
+- **accuracy** — fraction of the 11 fields populated (or, for fictitious companies, whether it failed at the right stage).
+- **latency** — analyze (Agents 1-4) vs. submit (Agent 5) wall-clock, timestamped from the SSE stream.
+- **output** — the full plan or the error, captured per case.
+
+**Salesforce hygiene (automatic cleanup).** Before the run, the harness snapshots which `Account` records already exist. Afterward it deletes **every `AccountPlan` it created** and only those `Account` records that **did not pre-exist** — so real accounts are protected while test-created ones are removed. The dashboard shows exactly what was deleted vs. protected, and the run leaves the org clean.
+
+> The harness makes real you.com + LLM calls and real Salesforce writes on each run, so it takes a few minutes and consumes API/SF quota. It cleans up after itself, but treat it as a live integration test, not a unit test.
+
+### Sample run
+
+The generated dashboard (metrics, latency-by-case chart, per-case detail, and the Salesforce cleanup log):
+
+![Eval dashboard](eval/dashboard-sample.png)
+
+A full run (2026-08-29, http server booted by the harness):
+
+| Metric | Value |
+|--------|-------|
+| Cases | 6 |
+| Success rate | **6/6 (100%)** |
+| Avg accuracy | **100%** |
+| Avg analyze latency | 32.3s (median 32.3s, max 62.5s) |
+| Total duration | 220.3s |
+
+Per case:
+
+| Case | Company | Memory | Transport | Expect | Success | Accuracy | Analyze | SF write | Outcome |
+|------|---------|--------|-----------|--------|:-------:|:--------:|--------:|:--------:|---------|
+| `salesforce-mem-stdio` | Salesforce | on | stdio | plan | ✅ | 100% | 62.5s | PASS | All 11 fields populated |
+| `schlumberger-nomem-stdio` | Schlumberger | off | stdio | plan | ✅ | 100% | 30.7s | PASS | All 11 fields populated |
+| `databricks-mem-stdio` | Databricks | on | stdio | plan | ✅ | 100% | 33.9s | PASS | All 11 fields populated |
+| `salesforce-mem-http` | Salesforce | on | http | plan | ✅ | 100% | 62.1s | PASS | All 11 fields populated |
+| `zorptech-mem` | Zorptech Dynamics | on | stdio | discover_fail | ✅ | 100% | 3.7s | — | Failed gracefully at Agent 1, as expected |
+| `fybernetic-nomem` | Fybernetic Global Solutions | off | stdio | discover_fail | ✅ | 100% | 0.9s | — | Failed gracefully at Agent 1, as expected |
+
+The fictitious companies fail fast at discovery (under 4s) instead of hallucinating competitors, and the `http` transport case passes identically to `stdio`.
+
+**Cleanup for this run:** 4 `AccountPlan` records deleted, 2 `Account` records deleted (Schlumberger and Databricks, which the run created), 1 `Account` protected (Salesforce, which pre-existed), 0 errors. Verified against the org afterward: all deleted ids gone, the protected account still present.
+
+---
+
 ## Project layout
 
 ```
@@ -254,4 +324,9 @@ frontend/
   src/App.jsx            React UI (input, progress, edit, submit, modal).
   src/styles.css         Styling.
   src/main.jsx           React entry.
+
+eval/
+  dataset.py             Eval cases (real/fictitious, memory, transport, submit).
+  run_eval.py            Harness: runs cases, scores, cleans up SF, builds dashboard.
+  results/               Generated: dashboard.html + results.json (git-ignored).
 ```
